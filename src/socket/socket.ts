@@ -11,7 +11,6 @@ export function initializeSocket(server: http.Server) {
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 
-    // Handle room creation
     socket.on("createRoom", async ({ roomId, userId }) => {
       try {
         const newRoom = await prismaClient.gameRoom.create({
@@ -47,16 +46,15 @@ export function initializeSocket(server: http.Server) {
           playersData[userId] = {
             socketId: player.socketId,
             userId: player.userId,
-            health: player.health
+            health: player.health,
           };
         });
 
-        socket.emit("roomData", { 
-          roomId, 
+        socket.emit("roomData", {
+          roomId,
           players: playersData,
-          playerCount: room.players.size
+          playerCount: room.players.size,
         });
-
       } catch (error) {
         console.error("Error creating room:", error);
         socket.emit("error", { message: "Failed to create room" });
@@ -97,27 +95,30 @@ export function initializeSocket(server: http.Server) {
         return;
       }
 
+      if (room.players.size >= 2) {
+        socket.emit("error", "Room is full");
+        return;
+      }
+
       room.players.set(userId, { socketId: socket.id, userId, health: 3 });
       socket.join(roomId);
-      
+
       console.log(`User ${userId} joined room ${roomId}`);
       socket.emit("joinedRoom", { roomId, userId, health: 3 });
 
-      // Broadcast updated room data to ALL users in the room (including the one who just joined)
       const playersData: Record<string, any> = {};
       room.players.forEach((player, userId) => {
         playersData[userId] = {
           socketId: player.socketId,
           userId: player.userId,
-          health: player.health
+          health: player.health,
         };
       });
 
-      // Send to everyone in the room
-      io.to(roomId).emit("roomData", { 
-        roomId, 
+      io.to(roomId).emit("roomData", {
+        roomId,
         players: playersData,
-        playerCount: room.players.size
+        playerCount: room.players.size,
       });
 
       console.log(`Broadcasted room data to all users in room ${roomId}`);
@@ -167,15 +168,15 @@ export function initializeSocket(server: http.Server) {
         playersData[userId] = {
           socketId: player.socketId,
           userId: player.userId,
-          health: player.health
+          health: player.health,
         };
       });
 
       console.log(`Sending room data for ${roomId}:`, playersData);
-      socket.emit("roomData", { 
-        roomId, 
+      socket.emit("roomData", {
+        roomId,
         players: playersData,
-        playerCount: room.players.size
+        playerCount: room.players.size,
       });
     });
 
@@ -200,7 +201,9 @@ export function initializeSocket(server: http.Server) {
         userId,
         health: player.health,
       });
-      console.log(`${userId} rejoined room ${roomId} with health ${player.health}`);
+      console.log(
+        `${userId} rejoined room ${roomId} with health ${player.health}`
+      );
     });
 
     // Handle leaving room
@@ -210,26 +213,26 @@ export function initializeSocket(server: http.Server) {
         room.players.delete(userId);
         socket.leave(roomId);
         console.log(`${userId} left room ${roomId}`);
-        
+
         // Notify other players in the room about someone leaving
         io.to(roomId).emit("playerLeft", { userId });
-        
+
         // Broadcast updated room data to remaining users
         const playersData: Record<string, any> = {};
         room.players.forEach((player, userId) => {
           playersData[userId] = {
             socketId: player.socketId,
             userId: player.userId,
-            health: player.health
+            health: player.health,
           };
         });
 
-        io.to(roomId).emit("roomData", { 
-          roomId, 
+        io.to(roomId).emit("roomData", {
+          roomId,
           players: playersData,
-          playerCount: room.players.size
+          playerCount: room.players.size,
         });
-        
+
         // If room is empty, you might want to delete it
         if (room.players.size === 0) {
           rooms.delete(roomId);
@@ -241,33 +244,35 @@ export function initializeSocket(server: http.Server) {
     // Handle disconnect
     socket.on("disconnect", () => {
       console.log("Client disconnected:", socket.id);
-      
+
       // Find and remove player from all rooms
       rooms.forEach((room, roomId) => {
         room.players.forEach((player, userId) => {
           if (player.socketId === socket.id) {
             room.players.delete(userId);
-            console.log(`Removed disconnected user ${userId} from room ${roomId}`);
-            
+            console.log(
+              `Removed disconnected user ${userId} from room ${roomId}`
+            );
+
             // Notify other players in the room about disconnection
             io.to(roomId).emit("playerLeft", { userId });
-            
+
             // Broadcast updated room data to remaining users
             const playersData: Record<string, any> = {};
             room.players.forEach((player, userId) => {
               playersData[userId] = {
                 socketId: player.socketId,
                 userId: player.userId,
-                health: player.health
+                health: player.health,
               };
             });
 
-            io.to(roomId).emit("roomData", { 
-              roomId, 
+            io.to(roomId).emit("roomData", {
+              roomId,
               players: playersData,
-              playerCount: room.players.size
+              playerCount: room.players.size,
             });
-            
+
             // Clean up empty rooms
             if (room.players.size === 0) {
               rooms.delete(roomId);
