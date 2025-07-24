@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model UserAccount {
+  id           String                @id @default(uuid())
+  email        String
+  username     String
+  password     String
+  created_at   DateTime              @default(now())
+  histories    History[]
+  answers      Answer[]
+  gameRoomsWon GameRoom[]            @relation("WinnerUser")
+  participants GameRoomParticipant[]
+}
+
+model History {
+  id           Int    @id @default(autoincrement())
+  score        Int
+  user_id      String
+  game_room_id Int
+  difficulty   String
+
+  user_account UserAccount @relation(fields: [user_id], references: [id])
+  gameRoom     GameRoom    @relation(fields: [game_room_id], references: [id])
+}
+
+model GameRoom {
+  id             Int        @id @default(autoincrement())
+  code           String     @unique
+  mode           GameMode
+  status         GameStatus
+  created_at     DateTime   @default(now())
+  winner_user_id String? // now references UUID
+
+  winner       UserAccount?          @relation("WinnerUser", fields: [winner_user_id], references: [id])
+  histories    History[]
+  rounds       GameRound[]
+  participants GameRoomParticipant[]
+}
+
+model Answer {
+  id          Int     @id @default(autoincrement())
+  user_id     String
+  round_id    Int
+  user_answer String
+  is_correct  Boolean
+
+  user_account UserAccount @relation(fields: [user_id], references: [id])
+  round        GameRound   @relation(fields: [round_id], references: [id])
+}
+
+model GameRound {
+  id             Int    @id @default(autoincrement())
+  game_room_id   Int
+  round_number   Int
+  type_question  String
+  correct_answer String
+
+  game_room GameRoom @relation(fields: [game_room_id], references: [id])
+  answers   Answer[]
+}
+
+model GameRoomParticipant {
+  id           Int    @id @default(autoincrement())
+  game_room_id Int
+  user_id      String
+
+  game_room    GameRoom    @relation(fields: [game_room_id], references: [id])
+  user_account UserAccount @relation(fields: [user_id], references: [id])
+}
+
+enum GameMode {
+  ai
+  player_vs_player
+}
+
+enum GameStatus {
+  waiting
+  playing
+  finished
+}
