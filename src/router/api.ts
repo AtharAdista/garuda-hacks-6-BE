@@ -5,4 +5,4 @@ import { UserController } from "../controller/user-controller";
 export const apiRouter = express.Router();
 apiRouter.use(authenticateToken);
 
-apiRouter.get("/api/user/current", UserController.get)
+apiRouter.get("/api/user/current", UserController.get);
