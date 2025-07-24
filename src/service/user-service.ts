@@ -66,7 +66,6 @@ export class UserService {
   }
 
   static async get(user: GetUserResponse): Promise<GetUserResponse>{
-    console.log(user)
     return {
         id: user.id,
         email: user.email
