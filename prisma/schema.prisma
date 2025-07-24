@@ -42,7 +42,7 @@ model GameRoom {
   mode           GameMode
   status         GameStatus
   created_at     DateTime   @default(now())
-  winner_user_id String? // now references UUID
+  winner_user_id String?
 
   winner       UserAccount?          @relation("WinnerUser", fields: [winner_user_id], references: [id])
   histories    History[]
