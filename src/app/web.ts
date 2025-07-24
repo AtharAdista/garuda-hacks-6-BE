@@ -5,7 +5,11 @@ import { publicApi } from "../router/public-api";
 import { apiRouter } from "../router/api";
 import { errorMiddleware } from "../middleware/error-middleware";
 
+import cors from "cors";
+
 const app = express();
+app.use(cors());
+
 export const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },

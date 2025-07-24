@@ -1,6 +1,7 @@
 import {
   CreateUserRequest,
   CreateUserResponse,
+  GetUserRequest,
   GetUserResponse,
   LoginUserRequest,
   LoginUserResponse,
@@ -65,12 +66,23 @@ export class UserService {
     };
   }
 
-  static async get(user: GetUserResponse): Promise<GetUserResponse>{
+  static async get(user: GetUserRequest): Promise<GetUserResponse>{
     console.log(user)
-    return {
+    const userAccount = await prismaClient.userAccount.findUnique({
+      where: {
         id: user.id,
-        email: user.email
+      },
+    });
+
+    if (!userAccount) {
+      throw new ResponseError(404, "User not found");
     }
+
+    return {
+      id: userAccount.id,
+      email: userAccount.email,
+      username: userAccount.username,
+    };
   }
 }
 

@@ -17,7 +17,15 @@ export type LoginUserResponse = {
   token: string;
 };
 
-export type GetUserResponse = {
+export type GetUserRequest = {
   id: string;
   email: string;
 };
+
+
+export type GetUserResponse = {
+  id: string;
+  email: string;
+  username: string;
+};
+
