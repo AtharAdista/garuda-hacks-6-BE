@@ -5,7 +5,6 @@ import { Server } from "socket.io";
 import { publicApi } from "../router/public-api";
 import { apiRouter } from "../router/api";
 import { errorMiddleware } from "../middleware/error-middleware";
-import cors from "cors"
 
 export const app = express();
 
