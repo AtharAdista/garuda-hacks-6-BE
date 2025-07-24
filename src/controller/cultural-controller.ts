@@ -125,7 +125,7 @@ export class CulturalController {
       media_url: result.media_url,
       cultural_category: result.cultural_category,
       query: result.query,
-      cultural_context: result.cultural_context || result.query,
+      cultural_fun_fact: result.cultural_fun_fact || result.query,
     };
   }
 

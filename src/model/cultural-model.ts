@@ -4,7 +4,7 @@ export interface CulturalMediaResponse {
   media_url: string;
   cultural_category: string;
   query: string;
-  cultural_context?: string;
+  cultural_fun_fact?: string;
 }
 
 export interface StreamStatusMessage {
@@ -22,4 +22,8 @@ export interface StreamCompleteMessage {
   total: number;
 }
 
-export type StreamMessage = CulturalMediaResponse | StreamStatusMessage | StreamErrorMessage | StreamCompleteMessage;
+export type StreamMessage =
+  | CulturalMediaResponse
+  | StreamStatusMessage
+  | StreamErrorMessage
+  | StreamCompleteMessage;
