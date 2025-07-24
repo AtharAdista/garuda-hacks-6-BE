@@ -4,8 +4,11 @@
   "description": "\"# garuda-hacks-6-BE\"",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon -e ts"
+    "dev": "nodemon -e ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy"
   },
   "author": "skoopi",
   "license": "ISC",
