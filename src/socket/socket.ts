@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import http from "http";
-import { prismaClient } from "../app/database";
+import { prismaClient, ensureDatabaseConnection } from "../app/database";
 import { Room, rooms } from "../type/room";
 import { CulturalService } from "../service/cultural-service";
 
@@ -237,7 +237,7 @@ function updateCulturalTimer(io: Server, roomId: string) {
       if (state.currentIndex + 1 < state.items.length) {
         // Move to inter-loading
         state.displayState = "inter_loading";
-        state.timeRemaining = 5;
+        state.timeRemaining = 15;
         console.log(`Room ${roomId}: Moving to inter-loading`);
       } else {
         // All items displayed
@@ -273,20 +273,58 @@ export function initializeSocket(server: http.Server) {
 
     socket.on("createRoom", async ({ roomId, userId }) => {
       try {
-        const newRoom = await prismaClient.gameRoom.create({
-          data: {
-            code: roomId,
-            mode: "player_vs_player",
-            status: "waiting",
-          },
+        // Ensure database connection is healthy
+        const connectionHealthy = await ensureDatabaseConnection();
+        if (!connectionHealthy) {
+          console.error("Database connection failed for createRoom");
+          socket.emit("error", { message: "Database connection issue, please try again" });
+          return;
+        }
+
+        // Check if room already exists in database first
+        const existingRoom = await prismaClient.gameRoom.findUnique({
+          where: { code: roomId },
+          include: { participants: true },
         });
 
-        await prismaClient.gameRoomParticipant.create({
-          data: {
-            game_room_id: newRoom.id,
-            user_id: userId,
-          },
-        });
+        let gameRoom;
+        if (existingRoom) {
+          // Room exists, check if user is already a participant
+          const existingParticipant = existingRoom.participants.find(
+            (p) => p.user_id === userId
+          );
+          
+          if (!existingParticipant) {
+            // Add user as participant if not already there
+            await prismaClient.gameRoomParticipant.create({
+              data: {
+                game_room_id: existingRoom.id,
+                user_id: userId,
+              },
+            });
+          }
+          gameRoom = existingRoom;
+        } else {
+          // Create new room and add participant in a transaction to avoid race conditions
+          gameRoom = await prismaClient.$transaction(async (tx) => {
+            const newRoom = await tx.gameRoom.create({
+              data: {
+                code: roomId,
+                mode: "player_vs_player",
+                status: "waiting",
+              },
+            });
+
+            await tx.gameRoomParticipant.create({
+              data: {
+                game_room_id: newRoom.id,
+                user_id: userId,
+              },
+            });
+
+            return newRoom;
+          });
+        }
 
         const room: Room = {
           id: roomId,
@@ -297,7 +335,7 @@ export function initializeSocket(server: http.Server) {
         rooms.set(roomId, room);
 
         socket.join(roomId);
-        console.log(`Room ${roomId} created by ${userId}`);
+        console.log(`Room ${roomId} created/joined by ${userId}`);
         socket.emit("roomCreated", { roomId, userId, health: 3 });
 
         // Send initial room data to the creator
@@ -317,13 +355,32 @@ export function initializeSocket(server: http.Server) {
         });
       } catch (error) {
         console.error("Error creating room:", error);
-        socket.emit("error", { message: "Failed to create room" });
+        // Handle specific Prisma errors
+        if (error && typeof error === 'object' && 'code' in error) {
+          if (error.code === "P2002") {
+            socket.emit("error", { message: "Room already exists" });
+          } else if (error.code === "42P05") {
+            socket.emit("error", { message: "Database connection issue, please try again" });
+          } else {
+            socket.emit("error", { message: "Failed to create room" });
+          }
+        } else {
+          socket.emit("error", { message: "Failed to create room" });
+        }
       }
     });
 
     // Handle room joining
     socket.on("joinRoom", async ({ roomId, userId }) => {
       try {
+        // Ensure database connection is healthy
+        const connectionHealthy = await ensureDatabaseConnection();
+        if (!connectionHealthy) {
+          console.error("Database connection failed for joinRoom");
+          socket.emit("error", "Database connection issue, please try again");
+          return;
+        }
+
         // First, clean any stale connections in the room
         cleanStaleConnections(io, roomId);
 
@@ -389,24 +446,27 @@ export function initializeSocket(server: http.Server) {
           });
 
           if (gameRoom) {
-            const existingParticipant =
-              await prismaClient.gameRoomParticipant.findFirst({
+            // Use upsert to handle race conditions
+            try {
+              await prismaClient.gameRoomParticipant.upsert({
                 where: {
-                  game_room_id: gameRoom.id,
-                  user_id: userId,
+                  game_room_id_user_id: {
+                    game_room_id: gameRoom.id,
+                    user_id: userId,
+                  },
                 },
-              });
-
-            if (!existingParticipant) {
-              await prismaClient.gameRoomParticipant.create({
-                data: {
+                update: {}, // No update needed if exists
+                create: {
                   game_room_id: gameRoom.id,
                   user_id: userId,
                 },
               });
               console.log(
-                `Added user ${userId} to database for room ${roomId}`
+                `Added/confirmed user ${userId} in database for room ${roomId}`
               );
+            } catch (participantError) {
+              console.warn(`Non-critical participant creation error for ${userId}:`, participantError);
+              // Continue execution - this is not critical for the game flow
             }
           }
         }
@@ -450,6 +510,14 @@ export function initializeSocket(server: http.Server) {
     // Handle room rejoin
     socket.on("rejoinRoom", async ({ roomId, userId }) => {
       try {
+        // Ensure database connection is healthy
+        const connectionHealthy = await ensureDatabaseConnection();
+        if (!connectionHealthy) {
+          console.error("Database connection failed for rejoinRoom");
+          socket.emit("error", "Database connection issue, please try again");
+          return;
+        }
+
         cleanStaleConnections(io, roomId);
         let room = rooms.get(roomId);
 
@@ -737,6 +805,14 @@ export function initializeSocket(server: http.Server) {
         return;
       }
 
+      // Check if submissions are allowed (only during display phase)
+      const culturalState = roomCulturalState[roomId];
+      if (!culturalState || culturalState.displayState !== "displaying") {
+        console.log(`Submission rejected for ${userId} - not in display phase. Current state: ${culturalState?.displayState}`);
+        socket.emit("error", "Submissions not allowed at this time");
+        return;
+      }
+
       // Initialize room submissions if not exists
       if (!gameSubmissions[roomId]) {
         gameSubmissions[roomId] = {};
@@ -779,15 +855,28 @@ export function initializeSocket(server: http.Server) {
           totalPlayers: totalPlayers,
         });
 
+        // Skip remaining display time and move to inter-loading immediately
+        const culturalState = roomCulturalState[roomId];
+        if (culturalState && culturalState.displayState === "displaying") {
+          culturalState.displayState = "inter_loading";
+          culturalState.timeRemaining = 15;
+          console.log(`Room ${roomId}: Skipping to inter-loading phase as both players submitted`);
+          broadcastCulturalState(io, roomId);
+        }
+
         // Then after a brief moment, send the detailed results
         setTimeout(() => {
+          // Get the current cultural item to determine correct answer
+          const culturalState = roomCulturalState[roomId];
+          const correctProvince = culturalState?.items[culturalState.currentIndex]?.province || "Banten";
+          
           const results = Object.entries(gameSubmissions[roomId]).map(
             ([uid, prov]) => {
               const player = room.players.get(uid);
               return {
                 userId: uid,
                 province: prov,
-                isCorrect: prov.name === "Banten",
+                isCorrect: prov.name === correctProvince,
                 health: player?.health ?? 0,
               };
             }
@@ -828,7 +917,8 @@ export function initializeSocket(server: http.Server) {
             );
             io.to(roomId).emit("showResults", {
               results,
-              correctAnswer: "Banten",
+              correctAnswer: correctProvince,
+              culturalData: culturalState?.items[culturalState.currentIndex] || null,
             });
 
             // Cek apakah salah satu pemain mati
@@ -878,16 +968,18 @@ export function initializeSocket(server: http.Server) {
     });
 
     // Handle disconnect
-    socket.on("disconnect", () => {
-      console.log("Client disconnected:", socket.id);
+    socket.on("disconnect", (reason) => {
+      console.log("Client disconnected:", socket.id, "Reason:", reason);
 
       // Find and remove player from all rooms
+      const roomsToCleanup: string[] = [];
+      
       rooms.forEach((room, roomId) => {
         room.players.forEach((player, userId) => {
           if (player.socketId === socket.id) {
             room.players.delete(userId);
             console.log(
-              `Removed disconnected user ${userId} from room ${roomId}`
+              `Removed disconnected user ${userId} from room ${roomId} (reason: ${reason})`
             );
 
             // Clean up game submissions
@@ -898,8 +990,10 @@ export function initializeSocket(server: http.Server) {
               }
             }
 
-            // Notify other players in the room about disconnection
-            io.to(roomId).emit("playerLeft", { userId });
+            // Only notify others if it's an unexpected disconnect (not intentional leave)
+            if (reason !== "client namespace disconnect") {
+              io.to(roomId).emit("playerLeft", { userId, reason: "disconnected" });
+            }
 
             // Broadcast updated clean room data to remaining users
             const roomData = getCleanRoomData(io, roomId);
@@ -909,8 +1003,7 @@ export function initializeSocket(server: http.Server) {
 
             // If room becomes empty after disconnect, clean up states
             if (room.players.size === 0) {
-              cleanupCulturalState(roomId);
-              cleanupReadyState(roomId);
+              roomsToCleanup.push(roomId);
             } else {
               // Remove user from ready state and broadcast update
               if (roomReadyState[roomId]) {
@@ -923,6 +1016,14 @@ export function initializeSocket(server: http.Server) {
             }
           }
         });
+      });
+
+      // Clean up empty rooms
+      roomsToCleanup.forEach(roomId => {
+        cleanupCulturalState(roomId);
+        cleanupReadyState(roomId);
+        rooms.delete(roomId);
+        console.log(`Cleaned up empty room: ${roomId}`);
       });
     });
   });
