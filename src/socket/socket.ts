@@ -25,6 +25,10 @@ interface CulturalDisplayState {
   totalItems: number;
   items: any[];
   timer?: NodeJS.Timeout;
+  itemsReady: number;
+  allowSubmissions: boolean;
+  playersSubmitted: Set<string>;
+  roundStartTime?: number;
 }
 
 const roomCulturalState: Record<string, CulturalDisplayState> = {};
@@ -96,6 +100,10 @@ function initializeCulturalState(roomId: string) {
     timeRemaining: 10,
     totalItems: 0,
     items: [],
+    itemsReady: 0,
+    allowSubmissions: false,
+    playersSubmitted: new Set(),
+    roundStartTime: undefined,
   };
 }
 
@@ -120,6 +128,9 @@ function broadcastCulturalState(io: Server, roomId: string) {
       displayState: state.displayState,
       timeRemaining: state.timeRemaining,
       totalItems: state.totalItems,
+      itemsReady: state.itemsReady,
+      allowSubmissions: state.allowSubmissions,
+      playersSubmitted: Array.from(state.playersSubmitted),
       currentItem:
         state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
     };
@@ -200,6 +211,7 @@ async function fetchCulturalDataForRoom(roomId: string) {
         };
         state.items.push(culturalItem);
         state.totalItems = state.items.length;
+        state.itemsReady = state.items.length;
         console.log(
           `Fetched cultural item ${i} for room ${roomId}: ${result.province}`
         );
@@ -226,6 +238,9 @@ function updateCulturalTimer(io: Server, roomId: string) {
         state.currentIndex = 0;
         state.displayState = "displaying";
         state.timeRemaining = 30;
+        state.allowSubmissions = true;
+        state.playersSubmitted.clear();
+        state.roundStartTime = Date.now();
         console.log(`Room ${roomId}: Starting to display cultural items`);
       } else {
         // Reset loading timer if no data yet
@@ -234,11 +249,49 @@ function updateCulturalTimer(io: Server, roomId: string) {
     }
   } else if (state.displayState === "displaying") {
     if (state.timeRemaining <= 0) {
+      // Handle timeout - deduct health from players who didn't submit
+      const room = rooms.get(roomId);
+      if (room) {
+        const submittedPlayers = gameSubmissions[roomId] ? new Set(Object.keys(gameSubmissions[roomId])) : new Set();
+        room.players.forEach((player, userId) => {
+          if (!submittedPlayers.has(userId)) {
+            // Player didn't submit in time, deduct health
+            player.health -= 1;
+            console.log(`Player ${userId} didn't submit in time, health decreased to ${player.health}`);
+          }
+        });
+        
+        // Broadcast timeout results immediately
+        const results = Array.from(room.players.entries()).map(([userId, player]) => ({
+          userId,
+          province: submittedPlayers.has(userId) ? gameSubmissions[roomId][userId] : null,
+          isCorrect: false, // Timeout means incorrect
+          health: player.health,
+          timedOut: !submittedPlayers.has(userId)
+        }));
+        
+        const correctProvince = state.items[state.currentIndex]?.province || "Unknown";
+        
+        io.to(roomId).emit("showResults", {
+          results,
+          correctAnswer: correctProvince,
+          culturalData: state.items[state.currentIndex] || null,
+          timeoutOccurred: true
+        });
+      }
+      
+      // Reset submissions and player tracking for next round
+      state.playersSubmitted.clear();
+      state.allowSubmissions = false;
+      if (gameSubmissions[roomId]) {
+        delete gameSubmissions[roomId];
+      }
+      
       if (state.currentIndex + 1 < state.items.length) {
         // Move to inter-loading
         state.displayState = "inter_loading";
-        state.timeRemaining = 15;
-        console.log(`Room ${roomId}: Moving to inter-loading`);
+        state.timeRemaining = 3;
+        console.log(`Room ${roomId}: Moving to inter-loading after timeout`);
       } else {
         // All items displayed
         state.displayState = "completed";
@@ -256,6 +309,9 @@ function updateCulturalTimer(io: Server, roomId: string) {
       state.currentIndex++;
       state.displayState = "displaying";
       state.timeRemaining = 30;
+      state.allowSubmissions = true;
+      state.playersSubmitted.clear();
+      state.roundStartTime = Date.now();
       console.log(`Room ${roomId}: Displaying item ${state.currentIndex + 1}`);
     }
   }
@@ -769,6 +825,9 @@ export function initializeSocket(server: http.Server) {
           displayState: state.displayState,
           timeRemaining: state.timeRemaining,
           totalItems: state.totalItems,
+          itemsReady: state.itemsReady,
+          allowSubmissions: state.allowSubmissions,
+          playersSubmitted: Array.from(state.playersSubmitted),
           currentItem:
             state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
         };
@@ -783,6 +842,9 @@ export function initializeSocket(server: http.Server) {
           displayState: "initial_loading",
           timeRemaining: 0,
           totalItems: 0,
+          itemsReady: 0,
+          allowSubmissions: false,
+          playersSubmitted: [],
           currentItem: null,
         });
       }
@@ -805,11 +867,18 @@ export function initializeSocket(server: http.Server) {
         return;
       }
 
-      // Check if submissions are allowed (only during display phase)
+      // Check if submissions are allowed (only during display phase and allowSubmissions is true)
       const culturalState = roomCulturalState[roomId];
-      if (!culturalState || culturalState.displayState !== "displaying") {
-        console.log(`Submission rejected for ${userId} - not in display phase. Current state: ${culturalState?.displayState}`);
+      if (!culturalState || culturalState.displayState !== "displaying" || !culturalState.allowSubmissions) {
+        console.log(`Submission rejected for ${userId} - not in display phase or submissions not allowed. Current state: ${culturalState?.displayState}, allowSubmissions: ${culturalState?.allowSubmissions}`);
         socket.emit("error", "Submissions not allowed at this time");
+        return;
+      }
+      
+      // Check if player already submitted
+      if (culturalState.playersSubmitted.has(userId)) {
+        console.log(`Submission rejected for ${userId} - player already submitted`);
+        socket.emit("error", "You have already submitted for this round");
         return;
       }
 
@@ -823,6 +892,10 @@ export function initializeSocket(server: http.Server) {
         ...province,
         submittedAt: new Date().toISOString(),
       };
+      
+      // Track this player as submitted
+      culturalState.playersSubmitted.add(userId);
+      
       console.log(`Stored submission for user ${userId}:`, province.name);
       console.log(
         `Current submissions in room ${roomId}:`,
@@ -835,6 +908,9 @@ export function initializeSocket(server: http.Server) {
         province,
       });
       console.log(`Broadcasted opponentSubmitted to room ${roomId}`);
+      
+      // Broadcast updated cultural state to show submission status
+      broadcastCulturalState(io, roomId);
 
       const totalPlayers = room.players.size;
       const submittedCount = Object.keys(gameSubmissions[roomId]).length;
@@ -859,7 +935,7 @@ export function initializeSocket(server: http.Server) {
         const culturalState = roomCulturalState[roomId];
         if (culturalState && culturalState.displayState === "displaying") {
           culturalState.displayState = "inter_loading";
-          culturalState.timeRemaining = 15;
+          culturalState.timeRemaining = 3;
           console.log(`Room ${roomId}: Skipping to inter-loading phase as both players submitted`);
           broadcastCulturalState(io, roomId);
         }
@@ -938,7 +1014,7 @@ export function initializeSocket(server: http.Server) {
 
                 // Kosongkan submission untuk ronde baru
                 gameSubmissions[roomId] = {};
-              }, 2000); // delay sebelum next round
+              }, 500); // delay sebelum next round
             } else {
               // Kirim event game over
               const winner =
@@ -960,7 +1036,7 @@ export function initializeSocket(server: http.Server) {
               delete gameSubmissions[roomId];
             }
           }
-        }, 1500); // 1.5 second delay to let users process the "both submitted" message
+        }, 500); // 0.5 second delay to let users process the "both submitted" message
 
         // Optional: Clean up submissions after showing results
         // delete gameSubmissions[roomId];
