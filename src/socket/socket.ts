@@ -2,8 +2,32 @@ import { Server } from "socket.io";
 import http from "http";
 import { prismaClient } from "../app/database";
 import { Room, rooms } from "../type/room";
+import { CulturalService } from "../service/cultural-service";
 
 const gameSubmissions: Record<string, Record<string, any>> = {};
+
+// Ready state management per room
+const roomReadyState: Record<string, Set<string>> = {};
+
+// Track which rooms have cultural data started to prevent duplicates
+const roomCulturalStarted: Record<string, boolean> = {};
+
+// Cultural data state management per room
+interface CulturalDisplayState {
+  currentIndex: number;
+  displayState:
+    | "initial_loading"
+    | "displaying"
+    | "inter_loading"
+    | "completed"
+    | "error";
+  timeRemaining: number;
+  totalItems: number;
+  items: any[];
+  timer?: NodeJS.Timeout;
+}
+
+const roomCulturalState: Record<string, CulturalDisplayState> = {};
 
 // Helper function to clean up stale socket connections in a room
 function cleanStaleConnections(io: Server, roomId: string) {
@@ -36,6 +60,8 @@ function cleanStaleConnections(io: Server, roomId: string) {
   if (room.players.size === 0) {
     rooms.delete(roomId);
     delete gameSubmissions[roomId];
+    cleanupCulturalState(roomId);
+    cleanupReadyState(roomId);
     console.log(`Room ${roomId} deleted - no active players remaining`);
   }
 }
@@ -60,6 +86,181 @@ function getCleanRoomData(io: Server, roomId: string) {
     players: playersData,
     playerCount: room.players.size,
   };
+}
+
+// Cultural data helper functions
+function initializeCulturalState(roomId: string) {
+  roomCulturalState[roomId] = {
+    currentIndex: -1,
+    displayState: "initial_loading",
+    timeRemaining: 10,
+    totalItems: 0,
+    items: [],
+  };
+}
+
+function cleanupCulturalState(roomId: string) {
+  const state = roomCulturalState[roomId];
+  if (state?.timer) {
+    clearInterval(state.timer);
+  }
+  delete roomCulturalState[roomId];
+}
+
+function cleanupReadyState(roomId: string) {
+  delete roomReadyState[roomId];
+  delete roomCulturalStarted[roomId];
+}
+
+function broadcastCulturalState(io: Server, roomId: string) {
+  const state = roomCulturalState[roomId];
+  if (state) {
+    const culturalData = {
+      currentIndex: state.currentIndex,
+      displayState: state.displayState,
+      timeRemaining: state.timeRemaining,
+      totalItems: state.totalItems,
+      currentItem:
+        state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
+    };
+
+    // Check how many sockets are in the room
+    const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
+    const socketCount = socketsInRoom ? socketsInRoom.size : 0;
+
+    console.log(
+      `Broadcasting cultural state to room ${roomId} (${socketCount} sockets):`,
+      culturalData
+    );
+    console.log(`Sockets in room ${roomId}:`, Array.from(socketsInRoom || []));
+
+    io.to(roomId).emit("culturalDataStateUpdate", culturalData);
+  }
+}
+
+async function startCulturalDataFlow(io: Server, roomId: string) {
+  console.log(`Starting cultural data flow for room ${roomId}`);
+
+  // Check if cultural data has already been started for this room
+  if (roomCulturalStarted[roomId]) {
+    console.log(`Cultural data already started for room ${roomId}, skipping`);
+    return;
+  }
+
+  // Check if room exists and has players
+  const room = rooms.get(roomId);
+  if (!room) {
+    console.error(`Cannot start cultural data flow - room ${roomId} not found`);
+    return;
+  }
+
+  console.log(
+    `Room ${roomId} has ${room.players.size} players before starting cultural flow`
+  );
+
+  // Mark cultural data as started for this room
+  roomCulturalStarted[roomId] = true;
+
+  initializeCulturalState(roomId);
+
+  // Add a small delay to ensure all players are connected and ready
+  setTimeout(() => {
+    console.log(`Broadcasting initial cultural state to room ${roomId}`);
+    broadcastCulturalState(io, roomId);
+
+    // Start fetching cultural data in background
+    fetchCulturalDataForRoom(roomId);
+
+    // Start the timer
+    const state = roomCulturalState[roomId];
+    if (state) {
+      console.log(`Starting cultural timer for room ${roomId}`);
+      state.timer = setInterval(() => {
+        updateCulturalTimer(io, roomId);
+      }, 1000);
+    }
+  }, 1000); // 1 second delay to ensure socket connections are stable
+}
+
+async function fetchCulturalDataForRoom(roomId: string) {
+  const maxItems = 10;
+
+  for (let i = 1; i <= maxItems; i++) {
+    try {
+      const result = await CulturalService.fetchCulturalMedia(i);
+      const state = roomCulturalState[roomId];
+      if (state) {
+        const culturalItem = {
+          province: result.province,
+          media_type: result.media_type,
+          media_url: result.media_url,
+          cultural_category: result.cultural_category,
+          query: result.query,
+          cultural_context: result.cultural_fun_fact || result.query,
+        };
+        state.items.push(culturalItem);
+        state.totalItems = state.items.length;
+        console.log(
+          `Fetched cultural item ${i} for room ${roomId}: ${result.province}`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `Error fetching cultural item ${i} for room ${roomId}:`,
+        error
+      );
+    }
+  }
+}
+
+function updateCulturalTimer(io: Server, roomId: string) {
+  const state = roomCulturalState[roomId];
+  if (!state) return;
+
+  state.timeRemaining--;
+
+  if (state.displayState === "initial_loading") {
+    if (state.timeRemaining <= 0) {
+      if (state.items.length > 0) {
+        // Start displaying first item
+        state.currentIndex = 0;
+        state.displayState = "displaying";
+        state.timeRemaining = 30;
+        console.log(`Room ${roomId}: Starting to display cultural items`);
+      } else {
+        // Reset loading timer if no data yet
+        state.timeRemaining = 10;
+      }
+    }
+  } else if (state.displayState === "displaying") {
+    if (state.timeRemaining <= 0) {
+      if (state.currentIndex + 1 < state.items.length) {
+        // Move to inter-loading
+        state.displayState = "inter_loading";
+        state.timeRemaining = 5;
+        console.log(`Room ${roomId}: Moving to inter-loading`);
+      } else {
+        // All items displayed
+        state.displayState = "completed";
+        state.timeRemaining = 0;
+        if (state.timer) {
+          clearInterval(state.timer);
+          delete state.timer;
+        }
+        console.log(`Room ${roomId}: Cultural display completed`);
+      }
+    }
+  } else if (state.displayState === "inter_loading") {
+    if (state.timeRemaining <= 0) {
+      // Move to next item
+      state.currentIndex++;
+      state.displayState = "displaying";
+      state.timeRemaining = 30;
+      console.log(`Room ${roomId}: Displaying item ${state.currentIndex + 1}`);
+    }
+  }
+
+  broadcastCulturalState(io, roomId);
 }
 
 export function initializeSocket(server: http.Server) {
@@ -310,6 +511,10 @@ export function initializeSocket(server: http.Server) {
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
         }
+        // Send current cultural state if it exists
+        if (roomCulturalState[roomId]) {
+          broadcastCulturalState(io, roomId);
+        }
       } catch (err) {
         console.error("Error during room rejoin:", err);
         socket.emit("error", "Failed to rejoin room");
@@ -339,6 +544,95 @@ export function initializeSocket(server: http.Server) {
         const roomData = getCleanRoomData(io, roomId);
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
+        }
+
+        // If room becomes empty after someone leaves, clean up states
+        if (room.players.size === 0) {
+          cleanupCulturalState(roomId);
+          cleanupReadyState(roomId);
+        } else {
+          // Remove user from ready state and broadcast update
+          if (roomReadyState[roomId]) {
+            roomReadyState[roomId].delete(userId);
+            io.to(roomId).emit("readyStateUpdate", {
+              readyPlayers: Array.from(roomReadyState[roomId]),
+              totalPlayers: room.players.size,
+            });
+          }
+        }
+      }
+    });
+
+    // Handle player ready state
+    socket.on("playerReady", ({ roomId, userId }) => {
+      console.log(`Player ${userId} is ready in room ${roomId}`);
+
+      const room = rooms.get(roomId);
+      if (!room) {
+        console.error(`Cannot mark ready - room ${roomId} not found`);
+        socket.emit("error", "Room not found");
+        return;
+      }
+
+      // Initialize ready state for room if not exists
+      if (!roomReadyState[roomId]) {
+        roomReadyState[roomId] = new Set();
+      }
+
+      // Add user to ready set
+      roomReadyState[roomId].add(userId);
+
+      console.log(
+        `Room ${roomId} ready players:`,
+        Array.from(roomReadyState[roomId])
+      );
+
+      // Broadcast ready state to all players in room
+      io.to(roomId).emit("readyStateUpdate", {
+        readyPlayers: Array.from(roomReadyState[roomId]),
+        totalPlayers: room.players.size,
+      });
+
+      // Check if both players are ready
+      if (
+        roomReadyState[roomId].size === room.players.size &&
+        room.players.size >= 2
+      ) {
+        console.log(
+          `All players ready in room ${roomId}, starting game and cultural data`
+        );
+
+        // Reset game submissions when starting new game
+        if (gameSubmissions[roomId]) {
+          delete gameSubmissions[roomId];
+        }
+
+        // Broadcast game started
+        io.to(roomId).emit("gameStarted", { roomId });
+
+        // Start cultural data flow immediately
+        setTimeout(() => {
+          startCulturalDataFlow(io, roomId);
+        }, 500); // Small delay to ensure all clients receive gameStarted first
+
+        console.log(`Game and cultural data started for room: ${roomId}`);
+      }
+    });
+
+    // Handle player unready state
+    socket.on("playerUnready", ({ roomId, userId }) => {
+      console.log(`Player ${userId} is no longer ready in room ${roomId}`);
+
+      if (roomReadyState[roomId]) {
+        roomReadyState[roomId].delete(userId);
+
+        const room = rooms.get(roomId);
+        if (room) {
+          // Broadcast updated ready state
+          io.to(roomId).emit("readyStateUpdate", {
+            readyPlayers: Array.from(roomReadyState[roomId]),
+            totalPlayers: room.players.size,
+          });
         }
       }
     });
@@ -376,7 +670,54 @@ export function initializeSocket(server: http.Server) {
 
       console.log(`Broadcasting gameStarted to room ${roomId}`);
       io.to(roomId).emit("gameStarted", { roomId }); // broadcast ke semua dalam room
+
       console.log(`Game started successfully in room: ${roomId}`);
+    });
+
+    // Handle request for current cultural state
+    socket.on("requestCulturalState", ({ roomId }) => {
+      console.log(
+        `User ${socket.id} requesting cultural state for room ${roomId}`
+      );
+
+      // Verify socket is in the room
+      const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
+      const isInRoom = socketsInRoom?.has(socket.id);
+
+      if (!isInRoom) {
+        console.log(
+          `Socket ${socket.id} is not in room ${roomId}, cannot send cultural state`
+        );
+        socket.emit("error", { message: "Not in room" });
+        return;
+      }
+
+      console.log(`Socket ${socket.id} verified in room ${roomId}`);
+
+      const state = roomCulturalState[roomId];
+      if (state) {
+        const culturalData = {
+          currentIndex: state.currentIndex,
+          displayState: state.displayState,
+          timeRemaining: state.timeRemaining,
+          totalItems: state.totalItems,
+          currentItem:
+            state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
+        };
+        console.log(`Sending cultural state to ${socket.id}:`, culturalData);
+        socket.emit("culturalDataStateUpdate", culturalData);
+      } else {
+        console.log(
+          `No cultural state found for room ${roomId}, sending default state`
+        );
+        socket.emit("culturalDataStateUpdate", {
+          currentIndex: -1,
+          displayState: "initial_loading",
+          timeRemaining: 0,
+          totalItems: 0,
+          currentItem: null,
+        });
+      }
     });
 
     // PERBAIKAN UTAMA - Handle province submission (final answer)
@@ -564,6 +905,21 @@ export function initializeSocket(server: http.Server) {
             const roomData = getCleanRoomData(io, roomId);
             if (roomData) {
               io.to(roomId).emit("roomData", roomData);
+            }
+
+            // If room becomes empty after disconnect, clean up states
+            if (room.players.size === 0) {
+              cleanupCulturalState(roomId);
+              cleanupReadyState(roomId);
+            } else {
+              // Remove user from ready state and broadcast update
+              if (roomReadyState[roomId]) {
+                roomReadyState[roomId].delete(userId);
+                io.to(roomId).emit("readyStateUpdate", {
+                  readyPlayers: Array.from(roomReadyState[roomId]),
+                  totalPlayers: room.players.size,
+                });
+              }
             }
           }
         });
