@@ -79,6 +79,8 @@ model GameRoomParticipant {
 
   game_room    GameRoom    @relation(fields: [game_room_id], references: [id])
   user_account UserAccount @relation(fields: [user_id], references: [id])
+
+  @@unique([game_room_id, user_id])
 }
 
 enum GameMode {
