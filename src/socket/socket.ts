@@ -12,17 +12,19 @@ function cleanStaleConnections(io: Server, roomId: string) {
 
   const connectedSockets = io.sockets.adapter.rooms.get(roomId);
   const connectedSocketIds = new Set(connectedSockets || []);
-  
+
   // Remove players whose sockets are no longer connected
   const playersToRemove: string[] = [];
   room.players.forEach((player, userId) => {
     if (!connectedSocketIds.has(player.socketId)) {
-      console.log(`Removing stale connection for user ${userId} with socket ${player.socketId}`);
+      console.log(
+        `Removing stale connection for user ${userId} with socket ${player.socketId}`
+      );
       playersToRemove.push(userId);
     }
   });
 
-  playersToRemove.forEach(userId => {
+  playersToRemove.forEach((userId) => {
     room.players.delete(userId);
     // Clean up game submissions for removed players
     if (gameSubmissions[roomId]) {
@@ -123,7 +125,7 @@ export function initializeSocket(server: http.Server) {
       try {
         // First, clean any stale connections in the room
         cleanStaleConnections(io, roomId);
-        
+
         let room = rooms.get(roomId);
 
         // If room not in memory, try to load from database
@@ -148,7 +150,9 @@ export function initializeSocket(server: http.Server) {
 
           // Don't add participants back to memory automatically - let them rejoin
           rooms.set(roomId, room);
-          console.log(`Room ${roomId} loaded from DB with ${gameRoom.participants.length} participants in database`);
+          console.log(
+            `Room ${roomId} loaded from DB with ${gameRoom.participants.length} participants in database`
+          );
         }
 
         // Check if user is already connected in this room
@@ -157,8 +161,14 @@ export function initializeSocket(server: http.Server) {
           const existingPlayer = room.players.get(userId)!;
           existingPlayer.socketId = socket.id;
           socket.join(roomId);
-          console.log(`User ${userId} reconnected to room ${roomId} with new socket ${socket.id}`);
-          socket.emit("joinedRoom", { roomId, userId, health: existingPlayer.health });
+          console.log(
+            `User ${userId} reconnected to room ${roomId} with new socket ${socket.id}`
+          );
+          socket.emit("joinedRoom", {
+            roomId,
+            userId,
+            health: existingPlayer.health,
+          });
         } else {
           // New user joining
           if (room.players.size >= 2) {
@@ -178,12 +188,13 @@ export function initializeSocket(server: http.Server) {
           });
 
           if (gameRoom) {
-            const existingParticipant = await prismaClient.gameRoomParticipant.findFirst({
-              where: {
-                game_room_id: gameRoom.id,
-                user_id: userId,
-              },
-            });
+            const existingParticipant =
+              await prismaClient.gameRoomParticipant.findFirst({
+                where: {
+                  game_room_id: gameRoom.id,
+                  user_id: userId,
+                },
+              });
 
             if (!existingParticipant) {
               await prismaClient.gameRoomParticipant.create({
@@ -192,7 +203,9 @@ export function initializeSocket(server: http.Server) {
                   user_id: userId,
                 },
               });
-              console.log(`Added user ${userId} to database for room ${roomId}`);
+              console.log(
+                `Added user ${userId} to database for room ${roomId}`
+              );
             }
           }
         }
@@ -201,9 +214,11 @@ export function initializeSocket(server: http.Server) {
         const roomData = getCleanRoomData(io, roomId);
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
-          console.log(`Broadcasted clean room data to all users in room ${roomId}:`, roomData.players);
+          console.log(
+            `Broadcasted clean room data to all users in room ${roomId}:`,
+            roomData.players
+          );
         }
-
       } catch (err) {
         console.error("Error during room join:", err);
         socket.emit("error", "Failed to join room");
@@ -212,7 +227,9 @@ export function initializeSocket(server: http.Server) {
 
     // PINDAHKAN KELUAR DARI requestRoomData - Handler province selection (for real-time preview)
     socket.on("selectProvince", ({ roomId, province, userId }) => {
-      console.log(`User ${userId} selecting province: ${province.name} in room ${roomId}`);
+      console.log(
+        `User ${userId} selecting province: ${province.name} in room ${roomId}`
+      );
       // Broadcast ke pemain lain di room untuk preview real-time
       socket.to(roomId).emit("provinceSelected", { province, userId });
     });
@@ -250,7 +267,9 @@ export function initializeSocket(server: http.Server) {
           }
 
           // Check if user is a participant in the database
-          const isParticipant = gameRoom.participants.some(p => p.user_id === userId);
+          const isParticipant = gameRoom.participants.some(
+            (p) => p.user_id === userId
+          );
           if (!isParticipant) {
             socket.emit("error", "User not part of room");
             return;
@@ -282,14 +301,15 @@ export function initializeSocket(server: http.Server) {
           health: room.players.get(userId)?.health || 3,
         });
 
-        console.log(`${userId} rejoined room ${roomId} with socket ${socket.id}`);
+        console.log(
+          `${userId} rejoined room ${roomId} with socket ${socket.id}`
+        );
 
         // Broadcast updated room data
         const roomData = getCleanRoomData(io, roomId);
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
         }
-
       } catch (err) {
         console.error("Error during room rejoin:", err);
         socket.emit("error", "Failed to rejoin room");
@@ -325,30 +345,35 @@ export function initializeSocket(server: http.Server) {
 
     socket.on("startGame", ({ roomId }) => {
       console.log(`Attempting to start game in room: ${roomId}`);
-      
+
       // Validate room exists and has players
       cleanStaleConnections(io, roomId);
       const room = rooms.get(roomId);
-      
+
       if (!room) {
         console.error(`Cannot start game - room ${roomId} not found`);
         socket.emit("error", "Room not found");
         return;
       }
-      
-      console.log(`Room ${roomId} has ${room.players.size} players:`, Array.from(room.players.keys()));
-      
+
+      console.log(
+        `Room ${roomId} has ${room.players.size} players:`,
+        Array.from(room.players.keys())
+      );
+
       if (room.players.size < 2) {
-        console.error(`Cannot start game - room ${roomId} only has ${room.players.size} players`);
+        console.error(
+          `Cannot start game - room ${roomId} only has ${room.players.size} players`
+        );
         socket.emit("error", "Need 2 players to start game");
         return;
       }
-      
+
       // Reset game submissions when starting new game
       if (gameSubmissions[roomId]) {
         delete gameSubmissions[roomId];
       }
-      
+
       console.log(`Broadcasting gameStarted to room ${roomId}`);
       io.to(roomId).emit("gameStarted", { roomId }); // broadcast ke semua dalam room
       console.log(`Game started successfully in room: ${roomId}`);
@@ -356,8 +381,13 @@ export function initializeSocket(server: http.Server) {
 
     // PERBAIKAN UTAMA - Handle province submission (final answer)
     socket.on("submitProvince", ({ province, userId, roomId }) => {
-      console.log(`User ${userId} submitted province:`, province.name, "in room:", roomId);
-      
+      console.log(
+        `User ${userId} submitted province:`,
+        province.name,
+        "in room:",
+        roomId
+      );
+
       // Get room info first to validate
       const room = rooms.get(roomId);
       if (!room) {
@@ -370,48 +400,137 @@ export function initializeSocket(server: http.Server) {
       if (!gameSubmissions[roomId]) {
         gameSubmissions[roomId] = {};
       }
-      
+
       // Store the submission with timestamp
       gameSubmissions[roomId][userId] = {
         ...province,
-        submittedAt: new Date().toISOString()
+        submittedAt: new Date().toISOString(),
       };
       console.log(`Stored submission for user ${userId}:`, province.name);
-      console.log(`Current submissions in room ${roomId}:`, Object.keys(gameSubmissions[roomId]));
-      
+      console.log(
+        `Current submissions in room ${roomId}:`,
+        Object.keys(gameSubmissions[roomId])
+      );
+
       // Broadcast ke opponent bahwa user ini sudah submit (dengan jawabannya)
-      socket.to(roomId).emit("opponentSubmitted", { 
-        userId, 
-        province 
+      socket.to(roomId).emit("opponentSubmitted", {
+        userId,
+        province,
       });
       console.log(`Broadcasted opponentSubmitted to room ${roomId}`);
-      
+
       const totalPlayers = room.players.size;
       const submittedCount = Object.keys(gameSubmissions[roomId]).length;
-      
-      console.log(`Room ${roomId}: ${submittedCount}/${totalPlayers} players submitted`);
-      
+
+      console.log(
+        `Room ${roomId}: ${submittedCount}/${totalPlayers} players submitted`
+      );
+
       // Cek apakah semua player dalam room sudah submit
       if (submittedCount === totalPlayers) {
         // First, notify that both players have submitted
-        console.log(`Both players submitted in room ${roomId}, notifying all players`);
+        console.log(
+          `Both players submitted in room ${roomId}, notifying all players`
+        );
         io.to(roomId).emit("bothPlayersSubmitted", {
           message: "Both players have submitted their answers!",
           submissionCount: submittedCount,
-          totalPlayers: totalPlayers
+          totalPlayers: totalPlayers,
         });
-        
+
         // Then after a brief moment, send the detailed results
         setTimeout(() => {
-          const results = Object.entries(gameSubmissions[roomId]).map(([uid, prov]) => ({
-            userId: uid,
-            province: prov
-          }));
-          
-          console.log(`Sending detailed results for room ${roomId}:`, results);
-          io.to(roomId).emit("showResults", { results });
+          const results = Object.entries(gameSubmissions[roomId]).map(
+            ([uid, prov]) => {
+              const player = room.players.get(uid);
+              return {
+                userId: uid,
+                province: prov,
+                isCorrect: prov.name === "Banten",
+                health: player?.health ?? 0,
+              };
+            }
+          );
+
+          const playerIds = Array.from(room.players.keys());
+          const [p1, p2] = playerIds;
+          const r1 = results.find((r) => r.userId === p1);
+          const r2 = results.find((r) => r.userId === p2);
+
+          if (r1 && r2) {
+            const p1Player = room.players.get(p1);
+            const p2Player = room.players.get(p2);
+
+            if (r1.isCorrect && r2.isCorrect) {
+              console.log("Both players answered correctly, no damage taken.");
+            } else if (!r1.isCorrect && !r2.isCorrect) {
+              console.log(
+                "Both players answered incorrectly, both lose 1 health."
+              );
+              if (p1Player) p1Player.health -= 1;
+              if (p2Player) p2Player.health -= 1;
+            } else if (r1.isCorrect && !r2.isCorrect) {
+              console.log("P1 benar, P2 salah — P2 kehilangan darah.");
+              if (p2Player) p2Player.health -= 1;
+            } else if (!r1.isCorrect && r2.isCorrect) {
+              console.log("P1 salah, P2 benar — P1 kehilangan darah.");
+              if (p1Player) p1Player.health -= 1;
+            }
+
+            // Update hasil akhir setelah damage
+            r1.health = p1Player?.health ?? r1.health;
+            r2.health = p2Player?.health ?? r2.health;
+
+            console.log(
+              `Sending detailed results for room ${roomId}:`,
+              results
+            );
+            io.to(roomId).emit("showResults", {
+              results,
+              correctAnswer: "Banten",
+            });
+
+            // Cek apakah salah satu pemain mati
+            const isGameOver =
+              (p1Player?.health ?? 0) <= 0 || (p2Player?.health ?? 0) <= 0;
+
+            if (!isGameOver) {
+              // Kirim event untuk lanjut ke ronde berikutnya
+              setTimeout(() => {
+                io.to(roomId).emit("nextRound", {
+                  roundMessage: "Next round is starting!",
+                  players: [
+                    { userId: p1, health: p1Player?.health ?? 0 },
+                    { userId: p2, health: p2Player?.health ?? 0 },
+                  ],
+                });
+
+                // Kosongkan submission untuk ronde baru
+                gameSubmissions[roomId] = {};
+              }, 2000); // delay sebelum next round
+            } else {
+              // Kirim event game over
+              const winner =
+                (p1Player?.health ?? 0) > 0
+                  ? p1
+                  : (p2Player?.health ?? 0) > 0
+                  ? p2
+                  : null;
+
+              io.to(roomId).emit("gameOver", {
+                winner,
+                players: [
+                  { userId: p1, health: p1Player?.health ?? 0 },
+                  { userId: p2, health: p2Player?.health ?? 0 },
+                ],
+              });
+
+              // Optional: bersihkan submissions
+              delete gameSubmissions[roomId];
+            }
+          }
         }, 1500); // 1.5 second delay to let users process the "both submitted" message
-        
+
         // Optional: Clean up submissions after showing results
         // delete gameSubmissions[roomId];
       }
