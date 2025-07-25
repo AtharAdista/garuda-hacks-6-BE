@@ -15,7 +15,12 @@ const roomCulturalStarted: Record<string, boolean> = {};
 // Cultural data state management per room
 interface CulturalDisplayState {
   currentIndex: number;
-  displayState: "initial_loading" | "displaying" | "inter_loading" | "completed" | "error";
+  displayState:
+    | "initial_loading"
+    | "displaying"
+    | "inter_loading"
+    | "completed"
+    | "error";
   timeRemaining: number;
   totalItems: number;
   items: any[];
@@ -31,17 +36,19 @@ function cleanStaleConnections(io: Server, roomId: string) {
 
   const connectedSockets = io.sockets.adapter.rooms.get(roomId);
   const connectedSocketIds = new Set(connectedSockets || []);
-  
+
   // Remove players whose sockets are no longer connected
   const playersToRemove: string[] = [];
   room.players.forEach((player, userId) => {
     if (!connectedSocketIds.has(player.socketId)) {
-      console.log(`Removing stale connection for user ${userId} with socket ${player.socketId}`);
+      console.log(
+        `Removing stale connection for user ${userId} with socket ${player.socketId}`
+      );
       playersToRemove.push(userId);
     }
   });
 
-  playersToRemove.forEach(userId => {
+  playersToRemove.forEach((userId) => {
     room.players.delete(userId);
     // Clean up game submissions for removed players
     if (gameSubmissions[roomId]) {
@@ -113,48 +120,54 @@ function broadcastCulturalState(io: Server, roomId: string) {
       displayState: state.displayState,
       timeRemaining: state.timeRemaining,
       totalItems: state.totalItems,
-      currentItem: state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
+      currentItem:
+        state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
     };
-    
+
     // Check how many sockets are in the room
     const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
     const socketCount = socketsInRoom ? socketsInRoom.size : 0;
-    
-    console.log(`Broadcasting cultural state to room ${roomId} (${socketCount} sockets):`, culturalData);
+
+    console.log(
+      `Broadcasting cultural state to room ${roomId} (${socketCount} sockets):`,
+      culturalData
+    );
     console.log(`Sockets in room ${roomId}:`, Array.from(socketsInRoom || []));
-    
+
     io.to(roomId).emit("culturalDataStateUpdate", culturalData);
   }
 }
 
 async function startCulturalDataFlow(io: Server, roomId: string) {
   console.log(`Starting cultural data flow for room ${roomId}`);
-  
+
   // Check if cultural data has already been started for this room
   if (roomCulturalStarted[roomId]) {
     console.log(`Cultural data already started for room ${roomId}, skipping`);
     return;
   }
-  
+
   // Check if room exists and has players
   const room = rooms.get(roomId);
   if (!room) {
     console.error(`Cannot start cultural data flow - room ${roomId} not found`);
     return;
   }
-  
-  console.log(`Room ${roomId} has ${room.players.size} players before starting cultural flow`);
-  
+
+  console.log(
+    `Room ${roomId} has ${room.players.size} players before starting cultural flow`
+  );
+
   // Mark cultural data as started for this room
   roomCulturalStarted[roomId] = true;
-  
+
   initializeCulturalState(roomId);
-  
+
   // Add a small delay to ensure all players are connected and ready
   setTimeout(() => {
     console.log(`Broadcasting initial cultural state to room ${roomId}`);
     broadcastCulturalState(io, roomId);
-    
+
     // Start fetching cultural data in background
     fetchCulturalDataForRoom(roomId);
 
@@ -171,7 +184,7 @@ async function startCulturalDataFlow(io: Server, roomId: string) {
 
 async function fetchCulturalDataForRoom(roomId: string) {
   const maxItems = 10;
-  
+
   for (let i = 1; i <= maxItems; i++) {
     try {
       const result = await CulturalService.fetchCulturalMedia(i);
@@ -187,10 +200,15 @@ async function fetchCulturalDataForRoom(roomId: string) {
         };
         state.items.push(culturalItem);
         state.totalItems = state.items.length;
-        console.log(`Fetched cultural item ${i} for room ${roomId}: ${result.province}`);
+        console.log(
+          `Fetched cultural item ${i} for room ${roomId}: ${result.province}`
+        );
       }
     } catch (error) {
-      console.error(`Error fetching cultural item ${i} for room ${roomId}:`, error);
+      console.error(
+        `Error fetching cultural item ${i} for room ${roomId}:`,
+        error
+      );
     }
   }
 }
@@ -308,7 +326,7 @@ export function initializeSocket(server: http.Server) {
       try {
         // First, clean any stale connections in the room
         cleanStaleConnections(io, roomId);
-        
+
         let room = rooms.get(roomId);
 
         // If room not in memory, try to load from database
@@ -333,7 +351,9 @@ export function initializeSocket(server: http.Server) {
 
           // Don't add participants back to memory automatically - let them rejoin
           rooms.set(roomId, room);
-          console.log(`Room ${roomId} loaded from DB with ${gameRoom.participants.length} participants in database`);
+          console.log(
+            `Room ${roomId} loaded from DB with ${gameRoom.participants.length} participants in database`
+          );
         }
 
         // Check if user is already connected in this room
@@ -342,8 +362,14 @@ export function initializeSocket(server: http.Server) {
           const existingPlayer = room.players.get(userId)!;
           existingPlayer.socketId = socket.id;
           socket.join(roomId);
-          console.log(`User ${userId} reconnected to room ${roomId} with new socket ${socket.id}`);
-          socket.emit("joinedRoom", { roomId, userId, health: existingPlayer.health });
+          console.log(
+            `User ${userId} reconnected to room ${roomId} with new socket ${socket.id}`
+          );
+          socket.emit("joinedRoom", {
+            roomId,
+            userId,
+            health: existingPlayer.health,
+          });
         } else {
           // New user joining
           if (room.players.size >= 2) {
@@ -363,12 +389,13 @@ export function initializeSocket(server: http.Server) {
           });
 
           if (gameRoom) {
-            const existingParticipant = await prismaClient.gameRoomParticipant.findFirst({
-              where: {
-                game_room_id: gameRoom.id,
-                user_id: userId,
-              },
-            });
+            const existingParticipant =
+              await prismaClient.gameRoomParticipant.findFirst({
+                where: {
+                  game_room_id: gameRoom.id,
+                  user_id: userId,
+                },
+              });
 
             if (!existingParticipant) {
               await prismaClient.gameRoomParticipant.create({
@@ -377,7 +404,9 @@ export function initializeSocket(server: http.Server) {
                   user_id: userId,
                 },
               });
-              console.log(`Added user ${userId} to database for room ${roomId}`);
+              console.log(
+                `Added user ${userId} to database for room ${roomId}`
+              );
             }
           }
         }
@@ -386,9 +415,11 @@ export function initializeSocket(server: http.Server) {
         const roomData = getCleanRoomData(io, roomId);
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
-          console.log(`Broadcasted clean room data to all users in room ${roomId}:`, roomData.players);
+          console.log(
+            `Broadcasted clean room data to all users in room ${roomId}:`,
+            roomData.players
+          );
         }
-
       } catch (err) {
         console.error("Error during room join:", err);
         socket.emit("error", "Failed to join room");
@@ -397,7 +428,9 @@ export function initializeSocket(server: http.Server) {
 
     // PINDAHKAN KELUAR DARI requestRoomData - Handler province selection (for real-time preview)
     socket.on("selectProvince", ({ roomId, province, userId }) => {
-      console.log(`User ${userId} selecting province: ${province.name} in room ${roomId}`);
+      console.log(
+        `User ${userId} selecting province: ${province.name} in room ${roomId}`
+      );
       // Broadcast ke pemain lain di room untuk preview real-time
       socket.to(roomId).emit("provinceSelected", { province, userId });
     });
@@ -435,7 +468,9 @@ export function initializeSocket(server: http.Server) {
           }
 
           // Check if user is a participant in the database
-          const isParticipant = gameRoom.participants.some(p => p.user_id === userId);
+          const isParticipant = gameRoom.participants.some(
+            (p) => p.user_id === userId
+          );
           if (!isParticipant) {
             socket.emit("error", "User not part of room");
             return;
@@ -467,19 +502,19 @@ export function initializeSocket(server: http.Server) {
           health: room.players.get(userId)?.health || 3,
         });
 
-        console.log(`${userId} rejoined room ${roomId} with socket ${socket.id}`);
+        console.log(
+          `${userId} rejoined room ${roomId} with socket ${socket.id}`
+        );
 
         // Broadcast updated room data
         const roomData = getCleanRoomData(io, roomId);
         if (roomData) {
           io.to(roomId).emit("roomData", roomData);
         }
-
         // Send current cultural state if it exists
         if (roomCulturalState[roomId]) {
           broadcastCulturalState(io, roomId);
         }
-
       } catch (err) {
         console.error("Error during room rejoin:", err);
         socket.emit("error", "Failed to rejoin room");
@@ -531,7 +566,7 @@ export function initializeSocket(server: http.Server) {
     // Handle player ready state
     socket.on("playerReady", ({ roomId, userId }) => {
       console.log(`Player ${userId} is ready in room ${roomId}`);
-      
+
       const room = rooms.get(roomId);
       if (!room) {
         console.error(`Cannot mark ready - room ${roomId} not found`);
@@ -546,9 +581,12 @@ export function initializeSocket(server: http.Server) {
 
       // Add user to ready set
       roomReadyState[roomId].add(userId);
-      
-      console.log(`Room ${roomId} ready players:`, Array.from(roomReadyState[roomId]));
-      
+
+      console.log(
+        `Room ${roomId} ready players:`,
+        Array.from(roomReadyState[roomId])
+      );
+
       // Broadcast ready state to all players in room
       io.to(roomId).emit("readyStateUpdate", {
         readyPlayers: Array.from(roomReadyState[roomId]),
@@ -556,22 +594,27 @@ export function initializeSocket(server: http.Server) {
       });
 
       // Check if both players are ready
-      if (roomReadyState[roomId].size === room.players.size && room.players.size >= 2) {
-        console.log(`All players ready in room ${roomId}, starting game and cultural data`);
-        
+      if (
+        roomReadyState[roomId].size === room.players.size &&
+        room.players.size >= 2
+      ) {
+        console.log(
+          `All players ready in room ${roomId}, starting game and cultural data`
+        );
+
         // Reset game submissions when starting new game
         if (gameSubmissions[roomId]) {
           delete gameSubmissions[roomId];
         }
-        
+
         // Broadcast game started
         io.to(roomId).emit("gameStarted", { roomId });
-        
+
         // Start cultural data flow immediately
         setTimeout(() => {
           startCulturalDataFlow(io, roomId);
         }, 500); // Small delay to ensure all clients receive gameStarted first
-        
+
         console.log(`Game and cultural data started for room: ${roomId}`);
       }
     });
@@ -579,10 +622,10 @@ export function initializeSocket(server: http.Server) {
     // Handle player unready state
     socket.on("playerUnready", ({ roomId, userId }) => {
       console.log(`Player ${userId} is no longer ready in room ${roomId}`);
-      
+
       if (roomReadyState[roomId]) {
         roomReadyState[roomId].delete(userId);
-        
+
         const room = rooms.get(roomId);
         if (room) {
           // Broadcast updated ready state
@@ -596,52 +639,61 @@ export function initializeSocket(server: http.Server) {
 
     socket.on("startGame", ({ roomId }) => {
       console.log(`Attempting to start game in room: ${roomId}`);
-      
+
       // Validate room exists and has players
       cleanStaleConnections(io, roomId);
       const room = rooms.get(roomId);
-      
+
       if (!room) {
         console.error(`Cannot start game - room ${roomId} not found`);
         socket.emit("error", "Room not found");
         return;
       }
-      
-      console.log(`Room ${roomId} has ${room.players.size} players:`, Array.from(room.players.keys()));
-      
+
+      console.log(
+        `Room ${roomId} has ${room.players.size} players:`,
+        Array.from(room.players.keys())
+      );
+
       if (room.players.size < 2) {
-        console.error(`Cannot start game - room ${roomId} only has ${room.players.size} players`);
+        console.error(
+          `Cannot start game - room ${roomId} only has ${room.players.size} players`
+        );
         socket.emit("error", "Need 2 players to start game");
         return;
       }
-      
+
       // Reset game submissions when starting new game
       if (gameSubmissions[roomId]) {
         delete gameSubmissions[roomId];
       }
-      
+
       console.log(`Broadcasting gameStarted to room ${roomId}`);
       io.to(roomId).emit("gameStarted", { roomId }); // broadcast ke semua dalam room
-      
+
       console.log(`Game started successfully in room: ${roomId}`);
     });
 
     // Handle request for current cultural state
     socket.on("requestCulturalState", ({ roomId }) => {
-      console.log(`User ${socket.id} requesting cultural state for room ${roomId}`);
-      
+      console.log(
+        `User ${socket.id} requesting cultural state for room ${roomId}`
+      );
+
       // Verify socket is in the room
       const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
       const isInRoom = socketsInRoom?.has(socket.id);
-      
+
       if (!isInRoom) {
-        console.log(`Socket ${socket.id} is not in room ${roomId}, cannot send cultural state`);
+        console.log(
+          `Socket ${socket.id} is not in room ${roomId}, cannot send cultural state`
+        );
         socket.emit("error", { message: "Not in room" });
         return;
       }
-      
+
       console.log(`Socket ${socket.id} verified in room ${roomId}`);
-      
+
       const state = roomCulturalState[roomId];
       if (state) {
         const culturalData = {
@@ -649,12 +701,15 @@ export function initializeSocket(server: http.Server) {
           displayState: state.displayState,
           timeRemaining: state.timeRemaining,
           totalItems: state.totalItems,
-          currentItem: state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
+          currentItem:
+            state.currentIndex >= 0 ? state.items[state.currentIndex] : null,
         };
         console.log(`Sending cultural state to ${socket.id}:`, culturalData);
         socket.emit("culturalDataStateUpdate", culturalData);
       } else {
-        console.log(`No cultural state found for room ${roomId}, sending default state`);
+        console.log(
+          `No cultural state found for room ${roomId}, sending default state`
+        );
         socket.emit("culturalDataStateUpdate", {
           currentIndex: -1,
           displayState: "initial_loading",
@@ -667,8 +722,13 @@ export function initializeSocket(server: http.Server) {
 
     // PERBAIKAN UTAMA - Handle province submission (final answer)
     socket.on("submitProvince", ({ province, userId, roomId }) => {
-      console.log(`User ${userId} submitted province:`, province.name, "in room:", roomId);
-      
+      console.log(
+        `User ${userId} submitted province:`,
+        province.name,
+        "in room:",
+        roomId
+      );
+
       // Get room info first to validate
       const room = rooms.get(roomId);
       if (!room) {
@@ -681,48 +741,137 @@ export function initializeSocket(server: http.Server) {
       if (!gameSubmissions[roomId]) {
         gameSubmissions[roomId] = {};
       }
-      
+
       // Store the submission with timestamp
       gameSubmissions[roomId][userId] = {
         ...province,
-        submittedAt: new Date().toISOString()
+        submittedAt: new Date().toISOString(),
       };
       console.log(`Stored submission for user ${userId}:`, province.name);
-      console.log(`Current submissions in room ${roomId}:`, Object.keys(gameSubmissions[roomId]));
-      
+      console.log(
+        `Current submissions in room ${roomId}:`,
+        Object.keys(gameSubmissions[roomId])
+      );
+
       // Broadcast ke opponent bahwa user ini sudah submit (dengan jawabannya)
-      socket.to(roomId).emit("opponentSubmitted", { 
-        userId, 
-        province 
+      socket.to(roomId).emit("opponentSubmitted", {
+        userId,
+        province,
       });
       console.log(`Broadcasted opponentSubmitted to room ${roomId}`);
-      
+
       const totalPlayers = room.players.size;
       const submittedCount = Object.keys(gameSubmissions[roomId]).length;
-      
-      console.log(`Room ${roomId}: ${submittedCount}/${totalPlayers} players submitted`);
-      
+
+      console.log(
+        `Room ${roomId}: ${submittedCount}/${totalPlayers} players submitted`
+      );
+
       // Cek apakah semua player dalam room sudah submit
       if (submittedCount === totalPlayers) {
         // First, notify that both players have submitted
-        console.log(`Both players submitted in room ${roomId}, notifying all players`);
+        console.log(
+          `Both players submitted in room ${roomId}, notifying all players`
+        );
         io.to(roomId).emit("bothPlayersSubmitted", {
           message: "Both players have submitted their answers!",
           submissionCount: submittedCount,
-          totalPlayers: totalPlayers
+          totalPlayers: totalPlayers,
         });
-        
+
         // Then after a brief moment, send the detailed results
         setTimeout(() => {
-          const results = Object.entries(gameSubmissions[roomId]).map(([uid, prov]) => ({
-            userId: uid,
-            province: prov
-          }));
-          
-          console.log(`Sending detailed results for room ${roomId}:`, results);
-          io.to(roomId).emit("showResults", { results });
+          const results = Object.entries(gameSubmissions[roomId]).map(
+            ([uid, prov]) => {
+              const player = room.players.get(uid);
+              return {
+                userId: uid,
+                province: prov,
+                isCorrect: prov.name === "Banten",
+                health: player?.health ?? 0,
+              };
+            }
+          );
+
+          const playerIds = Array.from(room.players.keys());
+          const [p1, p2] = playerIds;
+          const r1 = results.find((r) => r.userId === p1);
+          const r2 = results.find((r) => r.userId === p2);
+
+          if (r1 && r2) {
+            const p1Player = room.players.get(p1);
+            const p2Player = room.players.get(p2);
+
+            if (r1.isCorrect && r2.isCorrect) {
+              console.log("Both players answered correctly, no damage taken.");
+            } else if (!r1.isCorrect && !r2.isCorrect) {
+              console.log(
+                "Both players answered incorrectly, both lose 1 health."
+              );
+              if (p1Player) p1Player.health -= 1;
+              if (p2Player) p2Player.health -= 1;
+            } else if (r1.isCorrect && !r2.isCorrect) {
+              console.log("P1 benar, P2 salah — P2 kehilangan darah.");
+              if (p2Player) p2Player.health -= 1;
+            } else if (!r1.isCorrect && r2.isCorrect) {
+              console.log("P1 salah, P2 benar — P1 kehilangan darah.");
+              if (p1Player) p1Player.health -= 1;
+            }
+
+            // Update hasil akhir setelah damage
+            r1.health = p1Player?.health ?? r1.health;
+            r2.health = p2Player?.health ?? r2.health;
+
+            console.log(
+              `Sending detailed results for room ${roomId}:`,
+              results
+            );
+            io.to(roomId).emit("showResults", {
+              results,
+              correctAnswer: "Banten",
+            });
+
+            // Cek apakah salah satu pemain mati
+            const isGameOver =
+              (p1Player?.health ?? 0) <= 0 || (p2Player?.health ?? 0) <= 0;
+
+            if (!isGameOver) {
+              // Kirim event untuk lanjut ke ronde berikutnya
+              setTimeout(() => {
+                io.to(roomId).emit("nextRound", {
+                  roundMessage: "Next round is starting!",
+                  players: [
+                    { userId: p1, health: p1Player?.health ?? 0 },
+                    { userId: p2, health: p2Player?.health ?? 0 },
+                  ],
+                });
+
+                // Kosongkan submission untuk ronde baru
+                gameSubmissions[roomId] = {};
+              }, 2000); // delay sebelum next round
+            } else {
+              // Kirim event game over
+              const winner =
+                (p1Player?.health ?? 0) > 0
+                  ? p1
+                  : (p2Player?.health ?? 0) > 0
+                  ? p2
+                  : null;
+
+              io.to(roomId).emit("gameOver", {
+                winner,
+                players: [
+                  { userId: p1, health: p1Player?.health ?? 0 },
+                  { userId: p2, health: p2Player?.health ?? 0 },
+                ],
+              });
+
+              // Optional: bersihkan submissions
+              delete gameSubmissions[roomId];
+            }
+          }
         }, 1500); // 1.5 second delay to let users process the "both submitted" message
-        
+
         // Optional: Clean up submissions after showing results
         // delete gameSubmissions[roomId];
       }
@@ -763,7 +912,7 @@ export function initializeSocket(server: http.Server) {
               cleanupCulturalState(roomId);
               cleanupReadyState(roomId);
             } else {
-              // Remove user from ready state and broadcast update  
+              // Remove user from ready state and broadcast update
               if (roomReadyState[roomId]) {
                 roomReadyState[roomId].delete(userId);
                 io.to(roomId).emit("readyStateUpdate", {
